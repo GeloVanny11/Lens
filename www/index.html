@@ -49,7 +49,6 @@ body.recording #shutter::after{inset:20px;border-radius:8px;background:var(--rec
 #viewer.open{display:flex}
 #vTop{display:flex;justify-content:space-between;align-items:center;padding:12px 14px}
 #vTop button{border:0;border-radius:99px;padding:9px 16px;background:var(--chip);color:var(--fg);font:inherit}
-#vTop #vSave{background:var(--fg);color:#000;font-weight:600}
 #vScroll{flex:1;min-height:0;display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
 #vScroll::-webkit-scrollbar{display:none}
 .vi{flex:none;width:100%;scroll-snap-align:center;display:flex;align-items:center;justify-content:center}
@@ -83,7 +82,7 @@ body.recording #shutter::after{inset:20px;border-radius:8px;background:var(--rec
   </div>
 </div>
 
-<div id="viewer"><div id="vTop"><button id="vClose">Close</button><span id="vCount"></span><button id="vSave">Save</button></div><div id="vScroll"></div></div>
+<div id="viewer"><div id="vTop"><button id="vClose">Close</button><span id="vCount"></span><span></span></div><div id="vScroll"></div></div>
 
 <script>
 const FX=["Normal","B&W","Sepia","Vintage","Warm","Cool","Noir","Invert","Duotone","Posterize","Pixelate","Halftone","Glitch","VHS","Sketch","Emboss","Thermal","Mirror","Kaleidoscope","Fisheye","Swirl","Ripple"];
@@ -227,27 +226,29 @@ function openViewer(){
 vs.onscroll=vCount;
 $("#thumb").onclick=openViewer;
 $("#vClose").onclick=()=>{vs.querySelectorAll("video").forEach(v=>v.pause());$("#viewer").classList.remove("open")};
-$("#vSave").onclick=()=>{const it=items[vIdx()];if(it)save(it.blob,it.name)};
 
 async function save(blob,name){
-  const cap=window.Capacitor;
-  if(cap&&cap.isNativePlatform&&cap.isNativePlatform()&&cap.Plugins.Filesystem&&cap.Plugins.Share){
+  const cap=window.Capacitor,S=cap&&cap.Plugins&&cap.Plugins.LensSaver;
+  if(cap&&cap.isNativePlatform&&cap.isNativePlatform()&&S){
     try{
-      const data=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result.split(",")[1]);fr.onerror=rej;fr.readAsDataURL(blob)});
-      const f=await cap.Plugins.Filesystem.writeFile({path:name,data,directory:"CACHE"});
-      await cap.Plugins.Share.share({title:name,files:[f.uri]});
-    }catch(e){if(!/cancel/i.test(String(e&&e.message||e)))flashMsg("Couldn't save: "+(e&&e.message||e))}
+      const {id}=await S.begin({name,mime:blob.type||"application/octet-stream"});
+      const N=3*512*1024;
+      for(let o=0;o<blob.size;o+=N){
+        const data=await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result.split(",")[1]);fr.onerror=rej;fr.readAsDataURL(blob.slice(o,o+N))});
+        await S.write({id,data});
+      }
+      await S.finish({id});
+      flashMsg("Saved to "+(blob.type.startsWith("video")?"Movies":"Pictures")+"/Lens");
+    }catch(e){flashMsg("Couldn't save: "+(e&&e.message||e))}
     return;
   }
-  const file=new File([blob],name,{type:blob.type});
-  if(navigator.canShare&&navigator.canShare({files:[file]})){try{await navigator.share({files:[file]});return}catch(e){if(e.name==="AbortError")return}}
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);
 }
 const stamp=()=>new Date().toISOString().replace(/[:.]/g,"-").slice(0,19);
 
 function photo(){
   const f=$("#flash");f.style.transition="none";f.style.opacity=.8;requestAnimationFrame(()=>{f.style.transition="opacity .25s";f.style.opacity=0});
-  cv.toBlob(b=>b&&addItem("photo",b,`lens-${stamp()}.jpg`),"image/jpeg",.92);
+  cv.toBlob(b=>{if(!b)return;const n=`lens-${stamp()}.jpg`;addItem("photo",b,n);save(b,n)},"image/jpeg",.92);
 }
 let tI,t0;
 async function record(){
@@ -263,7 +264,7 @@ async function record(){
   r.ondataavailable=e=>e.data.size&&chunks.push(e.data);
   r.onstop=()=>{const th=cv.toDataURL("image/jpeg",.5);clearInterval(tI);$("#timer").textContent="";document.body.classList.remove("recording");st.rec=null;
     if(mic)mic.getTracks().forEach(t=>t.stop());
-    addItem("video",new Blob(chunks,{type:mime.split(";")[0]}),`lens-${stamp()}.${mime.includes("mp4")?"mp4":"webm"}`,th)};
+    const vb=new Blob(chunks,{type:mime.split(";")[0]}),vn=`lens-${stamp()}.${mime.includes("mp4")?"mp4":"webm"}`;addItem("video",vb,vn,th);save(vb,vn)};
   r.start();st.rec=r;document.body.classList.add("recording");closeTab();t0=Date.now();
   tI=setInterval(()=>{const s=Math.floor((Date.now()-t0)/1000);$("#timer").textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`},500);
 }

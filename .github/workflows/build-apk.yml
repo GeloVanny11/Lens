@@ -5,15 +5,20 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - uses: actions/setup-java@v4
         with:
@@ -21,15 +26,20 @@ jobs:
           java-version: 17
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: Create Android project
         run: npx cap add android
 
       - name: Add camera and microphone permissions
-        run: |
-          sed -i 's#</application>#</application>\n    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />#' android/app/src/main/AndroidManifest.xml
-          grep -n "uses-permission" android/app/src/main/AndroidManifest.xml
+        run: python3 scripts/patch_manifest.py
+
+      - name: Add gallery-saving plugin
+        run: python3 scripts/add_saver.py
+
+      - name: Generate app icon
+        continue-on-error: true
+        run: npx --yes @capacitor/assets generate --android --assetPath assets
 
       - name: Sync web files
         run: npx cap sync android
@@ -38,9 +48,21 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk lens-debug.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: lens-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: lens-debug.apk
+          if-no-files-found: error
+
+      - name: Publish to Releases
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest APK
+          files: lens-debug.apk
